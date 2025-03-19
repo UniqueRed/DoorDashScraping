@@ -81,26 +81,31 @@ async def retrieve_menu_items(instance, start_url: str) -> list[dict]:
             current_items = await page.locator('div[data-testid="MenuItem"]').all()
             current_count = len(current_items)
             
-            print(f"Found {current_count} menu items")
+            print(f"FOUND {current_count} MENU ITEMS")
             print("-------------------------------")
 
             for item in current_items:
                 try:
                     id = await item.get_attribute("data-item-id", timeout=5000)
                 except Exception:
-                    print("ID not found")
+                    print("ID NOT FOUND")
 
                 if id and id not in seen_items:
                     seen_items.add(id)
 
-                    await item.click()
+                    await item.click(force=True)
                     print("CLICKED ITEM")
 
-                    await page.wait_for_load_state("load", timeout=5000)
+                    await page.wait_for_load_state("domcontentloaded", timeout=5000)
 
                     print("REQUESTED")
 
-                    await page.locator('button[aria-label="Close"]').first.click(timeout=3000)
+                    try:
+                        await page.locator('button[aria-label="Close"]').first.click(timeout=3000)
+                    except Exception:
+                        print("CLOSE NOT FOUND, USING ESCAPE")
+                        await page.keyboard.press("Escape")
+                        await page.wait_for_timeout(500)
                     print("CLOSED")
                 else:
                     print("SKIPPING, ALREADY SEEN")
@@ -115,7 +120,7 @@ async def retrieve_menu_items(instance, start_url: str) -> list[dict]:
             is_at_bottom = await page.evaluate("window.innerHeight + window.scrollY >= document.body.scrollHeight")
 
             if is_at_bottom:
-                print("Reached the bottom")
+                print("REACHED BOTTOM")
                 break
         
         return menu_items
