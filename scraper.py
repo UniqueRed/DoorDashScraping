@@ -5,15 +5,36 @@ from undetected_playwright.async_api import async_playwright
 
 import os
 
+menu_items = {}
+
 async def get_scrapybara_browser():
     client = Scrapybara(api_key=os.environ.get("SCRAPYBARA_API_KEY"))
     instance = client.start_browser()
     return instance
 
-def requestMade(request):
-    if request.url.startswith("https://www.doordash.com/graphql/itemPage?operation=itemPage"):
-        print("Method: " + request.method)
-        print("URL: " + request.url)
+async def handle_response(response):
+    if response.url.startswith("https://www.doordash.com/graphql/itemPage?operation=itemPage"):
+        body = await response.json()
+        item_page = body.get("data", {}).get("itemPage", {})
+        item_header = item_page.get("itemHeader", {})
+        name = item_header.get("name")
+        description = item_header.get("description", "No description")
+        unit_amount = item_header.get("unitAmount", 0) / 100
+
+        optionLists = item_page.get("optionLists", [])
+
+        formatted_options = [
+            {"name": option["name"], "unitAmount": option["unitAmount"] / 100}
+            for optionList in optionLists if "options" in optionList
+            for option in optionList["options"]
+        ]
+
+        print(name)
+        menu_items[name] = {
+            "description": description,
+            "price": unit_amount,
+            "options": formatted_options
+        }
         return None
     return None
 
@@ -38,50 +59,66 @@ async def retrieve_menu_items(instance, start_url: str) -> list[dict]:
     :returns:
     a list of menu items on the page, represented as dictionaries
     """
+    seenItems = set()
+
     cdp_url = instance.get_cdp_url().cdp_url
     async with async_playwright() as p:
         browser = await p.chromium.connect_over_cdp(cdp_url)
         page = await browser.new_page()
 
-        page.on("request", requestMade)
+        page.on("response", handle_response)
 
         await page.goto(start_url)
 
         await page.wait_for_load_state("networkidle")
-
-        last_count = 0
-        new_items = 0
         
         viewport_height = await page.evaluate("window.innerHeight")
         current_scroll = 0
         
-        print("Starting to scroll and collect menu items...")
+        print("Start scrolling")
         
         while True:
             current_items = await page.locator('div[data-testid="MenuItem"]').all()
             current_count = len(current_items)
             
-            print(f"Found {current_count} menu items so far")
+            print(f"Found {current_count} menu items")
+            print("-------------------------------")
 
             for item in current_items:
-                text = await item.inner_text()
-                print(text)
-            
-            if current_count == last_count:
-                new_items += 1
-                if new_items >= 3:
-                    print("No more items")
-                    break
-            else:
-                new_items = 0
+                try:
+                    id = await item.get_attribute("data-item-id", timeout=5000)
+                except Exception:
+                    print("ID not found")
 
-            last_count = current_count
+                if id and id not in seenItems:
+                    seenItems.add(id)
+
+                    await item.click()
+                    print("CLICKED ITEM")
+
+                    await page.wait_for_load_state("load", timeout=5000)
+
+                    print("REQUESTED")
+
+                    await page.locator('button[aria-label="Close"]').first.click(timeout=3000)
+                    print("CLOSED")
+                else:
+                    print("SKIPPING, ALREADY SEEN")
+
+                await page.wait_for_timeout(1000)
+                print("-------------------------------")
             
             current_scroll += viewport_height * 0.8
             await page.evaluate(f"window.scrollTo(0, {current_scroll})")
             await page.wait_for_timeout(1000)
+
+            is_at_bottom = await page.evaluate("window.innerHeight + window.scrollY >= document.body.scrollHeight")
+
+            if is_at_bottom:
+                print("Reached the bottom")
+                break
         
-        return []
+        return menu_items
 
         # browser automation ...
 
@@ -90,10 +127,25 @@ async def main():
     instance = await get_scrapybara_browser()
 
     try:
-        await retrieve_menu_items(
+        menu = await retrieve_menu_items(
             instance,
             "https://www.doordash.com/store/panda-express-san-francisco-980938/12722988/?event_type=autocomplete&pickup=false",
         )
+
+        for item_name, details in menu.items():
+            price_display = f" (${details['price']:.2f})" if details["price"] > 0 else ""
+            print(f"\n{item_name} - {details['description']}{price_display}\n{'-' * 50}")
+
+            if details["options"]:
+                print("Options:")
+                for option in details["options"]:
+                    option_price_display = f" (${option['unitAmount']:.2f})" if option["unitAmount"] > 0 else ""
+                    print(f"  - {option['name']}{option_price_display}")
+            else:
+                print("No options available.")
+
+            print("=" * 50)
+
     finally:
         # Be sure to close the browser instance after you're done!
         instance.stop()
