@@ -59,7 +59,7 @@ async def retrieve_menu_items(instance, start_url: str) -> list[dict]:
     :returns:
     a list of menu items on the page, represented as dictionaries
     """
-    seenItems = set()
+    seen_items = set()
 
     cdp_url = instance.get_cdp_url().cdp_url
     async with async_playwright() as p:
@@ -90,8 +90,8 @@ async def retrieve_menu_items(instance, start_url: str) -> list[dict]:
                 except Exception:
                     print("ID not found")
 
-                if id and id not in seenItems:
-                    seenItems.add(id)
+                if id and id not in seen_items:
+                    seen_items.add(id)
 
                     await item.click()
                     print("CLICKED ITEM")
